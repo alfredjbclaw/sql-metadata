@@ -244,6 +244,22 @@ def test_unqualified_cte_alias_column_is_resolved_to_source_column():
     assert parser.columns == ["id"]
 
 
+def test_unqualified_self_aliased_cte_column_is_marked_as_cte_alias_reference():
+    query = """
+    WITH cte AS (
+        SELECT pid AS pid
+        FROM projects
+    )
+    SELECT *
+    FROM cte
+    WHERE pid > 0
+    """
+    parser = Parser(query)
+    assert parser.tables == ["projects"]
+    assert parser.columns == ["pid", "*"]
+    assert parser.columns_aliases_dict == {"where": ["pid"]}
+
+
 def test_resolving_with_columns_with_wildcard():
     query = """
     WITH
