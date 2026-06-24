@@ -165,13 +165,14 @@ class DialectParser:
             attempt.
         """
         upper = sql.upper()
+        compact_upper = "".join(upper.split())
         if _has_hash_variables(sql):
             return [HashVarDialect, None, "mysql"]
         if "`" in sql:
             return ["mysql", None]
         if "LATERAL VIEW" in upper:
             return ["spark", None, "mysql"]
-        if "[" in sql or " TOP " in upper:
+        if ("[" in sql and "ARRAY[" not in compact_upper) or " TOP " in upper:
             return [BracketedTableDialect, None, "mysql"]
         if " UNIQUE " in upper:
             return [None, "mysql", "oracle"]
@@ -207,7 +208,7 @@ class DialectParser:
                 if not is_last and self._is_degraded(result, clean_sql):
                     continue
                 return result, dialect
-            except (ParseError, TokenError):
+            except (ParseError, RecursionError, TokenError):
                 if dialect is not None and dialect == dialects[-1]:
                     raise InvalidQueryDefinition(
                         "Query could not be parsed — SQL syntax error"

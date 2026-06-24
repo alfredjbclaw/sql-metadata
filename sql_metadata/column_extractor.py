@@ -545,7 +545,11 @@ class ColumnExtractor:
                 cols = self._flat_columns(expr)
                 for col in cols:
                     self._collector.add_column(col, clause)
-                out.append(cols[0] if len(cols) == 1 else str(expr))
+                if not cols and isinstance(expr, exp.Array):
+                    self._collector.add_column("ARRAY", clause)
+                    out.append("ARRAY")
+                else:
+                    out.append(cols[0] if len(cols) == 1 else str(expr))
 
     def _handle_alias(self, alias_node: exp.Alias, clause: str, depth: int) -> None:
         """Process an ``Alias`` node from a SELECT expression list.

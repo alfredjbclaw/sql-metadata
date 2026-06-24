@@ -350,6 +350,19 @@ def test_columns_and_sql_functions():
     ).columns == ["col", "col2", "col3", "col4", "col5"]
 
 
+def test_static_array_select_returns_column_information():
+    query = """
+        SELECT ARRAY[
+            'seconds', 'minutes', 'hours', 'days',
+            'weeks', 'months', 'years'
+        ];
+    """
+    parser = Parser(query)
+
+    assert parser.columns == ["ARRAY"]
+    assert parser.columns_dict == {"select": ["ARRAY"]}
+
+
 def test_odbc_escape_function():
     # Solved: https://github.com/macbre/sql-metadata/issues/391
     parser = Parser(
