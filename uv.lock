@@ -1,0 +1,7 @@
+version = 1
+revision = 3
+requires-python = ">=3.11"
+
+[options]
+exclude-newer = "2026-06-21T04:13:54.483491Z"
+exclude-newer-span = "P3D"
