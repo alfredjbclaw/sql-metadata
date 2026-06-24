@@ -98,6 +98,39 @@ def test_getting_columns():
             """).columns == ["test_table.*", "bar"]
 
 
+def test_issue_8_qualifies_stars_and_subquery_columns():
+    # https://github.com/macbre/sql-metadata/issues/320
+    parser = Parser("SELECT * FROM MYSCHEMA.MYTABLE.PERSON WHERE 1")
+    assert parser.columns == ["MYSCHEMA.MYTABLE.PERSON.*"]
+
+    parser = Parser("SELECT COUNT(*) FROM HUBSPOT.DEAL_PIPELINE")
+    assert parser.columns == ["HUBSPOT.DEAL_PIPELINE.*"]
+
+    parser = Parser(
+        """
+        SELECT
+            CASE
+                WHEN (
+                    SELECT min("ID")
+                    FROM MYSCHEMA.MYTABLE1
+                ) > (
+                    SELECT max(ID)
+                    FROM MYSCHEMA.MYTABLE2
+                ) THEN TRUE
+                WHEN (
+                    SELECT max(ID)
+                    FROM MYSCHEMA.MYTABLE1
+                ) < (
+                    SELECT min(ID)
+                    FROM MYSCHEMA.MYTABLE2
+                ) THEN TRUE
+                ELSE FALSE
+            END AS NO_COMMON_DATA
+        """
+    )
+    assert parser.columns == ["MYSCHEMA.MYTABLE1.ID", "MYSCHEMA.MYTABLE2.ID"]
+
+
 def test_columns_with_order_by():
     assert Parser("SELECT foo FROM bar ORDER BY id").columns == ["foo", "id"]
     assert Parser("SELECT foo FROM bar WHERE id > 20 ORDER BY id").columns == [
