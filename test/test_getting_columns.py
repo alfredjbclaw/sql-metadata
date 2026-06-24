@@ -1,5 +1,9 @@
+import pytest
+from sqlglot import exp, parse_one
+
 from sql_metadata.keywords_lists import QueryType
 from sql_metadata.parser import Parser
+from sql_metadata.table_column_extractor import TableColumnExtractor
 
 
 def test_cast_and_convert_functions():
@@ -554,6 +558,225 @@ def test_getting_columns_dict_with_distinct():
     parsed = Parser(query)
     assert parsed.columns_dict == {"select": ["a", "b"], "where": ["b"]}
     assert parsed.columns == ["a", "b"]
+
+
+def test_columns_dict_by_table_relates_subquery_where_columns():
+    # Test for issue #13 / upstream #282 - subquery WHERE columns need table scope.
+    query = """
+    SELECT flowchartid, campaignid, aclid
+    FROM informix.UA_Flowchart
+    WHERE campaignid IN (
+        SELECT DISTINCT(campaignid)
+        FROM informix.UA_Campaign
+        WHERE folderid = 2
+    )
+    """
+
+    parser = Parser(query)
+
+    assert parser.tables == ["informix.UA_Flowchart", "informix.UA_Campaign"]
+    assert parser.columns_dict["where"] == ["campaignid", "folderid"]
+    assert parser.columns_dict_by_table["where"] == {
+        "informix.UA_Flowchart": ["campaignid"],
+        "informix.UA_Campaign": ["folderid"],
+    }
+
+
+def test_columns_dict_by_table_join_on():
+    # Covers JOIN ON clause column-table association
+    query = "SELECT a.id, b.name FROM users a JOIN orders b ON a.id = b.user_id"
+    parser = Parser(query)
+    assert parser.columns_dict_by_table["select"] == {
+        "users": ["id"],
+        "orders": ["name"],
+    }
+    assert parser.columns_dict_by_table["join"] == {
+        "users": ["id"],
+        "orders": ["user_id"],
+    }
+
+
+def test_columns_dict_by_table_join_using():
+    # Covers JOIN USING clause
+    query = "SELECT a.id FROM users a JOIN orders b USING (id)"
+    parser = Parser(query)
+    assert parser.columns_dict_by_table["join"] == {
+        "users": ["id"],
+        "orders": ["id"],
+    }
+
+
+def test_columns_dict_by_table_single_table():
+    # Single table: unqualified columns resolve to the only table
+    query = "SELECT id, name FROM users WHERE active = 1"
+    parser = Parser(query)
+    assert parser.columns_dict_by_table["select"] == {"users": ["id", "name"]}
+    assert parser.columns_dict_by_table["where"] == {"users": ["active"]}
+
+
+def test_columns_dict_by_table_qualified_columns():
+    # Fully qualified column references (table.column)
+    query = "SELECT users.id, users.name FROM users"
+    parser = Parser(query)
+    assert parser.columns_dict_by_table["select"] == {"users": ["id", "name"]}
+
+
+def test_columns_dict_by_table_group_by_order_by():
+    # Covers group_by and order_by clause mapping
+    query = "SELECT dept, COUNT(id) FROM employees GROUP BY dept ORDER BY dept"
+    parser = Parser(query)
+    assert parser.columns_dict_by_table["group_by"] == {"employees": ["dept"]}
+    assert parser.columns_dict_by_table["order_by"] == {"employees": ["dept"]}
+
+
+def test_columns_dict_by_table_having():
+    # Covers having clause
+    query = "SELECT dept FROM employees GROUP BY dept HAVING COUNT(id) > 5"
+    parser = Parser(query)
+    assert parser.columns_dict_by_table["having"] == {"employees": ["id"]}
+
+
+def test_columns_dict_by_table_invalid_sql_raises():
+    parser = Parser("WITH broken AS SELECT * FROM t")
+    with pytest.raises(ValueError, match="WITH clause without a main statement"):
+        parser.columns_dict_by_table
+
+
+def test_columns_dict_by_table_subquery_in_from():
+    # Subquery in FROM: columns from subquery's inner tables.
+    query = "SELECT x FROM (SELECT id AS x FROM users WHERE active = 1) sub"
+    parser = Parser(query)
+    # The inner query's columns should be associated with 'users'
+    result = parser.columns_dict_by_table
+    assert result.get("where", {}).get("users") == ["active"]
+
+
+def test_columns_dict_by_table_join_subquery():
+    # Subquery in JOIN source: walk_source_queries covers join subqueries.
+    query = """
+    SELECT a.id FROM users a
+    JOIN (SELECT user_id FROM orders WHERE amount > 100) b ON a.id = b.user_id
+    """
+    parser = Parser(query)
+    result = parser.columns_dict_by_table
+    assert result.get("where", {}).get("orders") == ["amount"]
+
+
+def test_columns_dict_by_table_union():
+    # UNION query: walk_query iterates non-Select children.
+    query = "SELECT id FROM users UNION SELECT id FROM admins"
+    parser = Parser(query)
+    result = parser.columns_dict_by_table
+    assert result["select"]["users"] == ["id"]
+    assert result["select"]["admins"] == ["id"]
+
+
+def test_columns_dict_by_table_qualified_with_schema():
+    # Columns qualified with schema.table prefix exercise fallback resolution.
+    query = "SELECT s.users.id FROM s.users"
+    parser = Parser(query)
+    result = parser.columns_dict_by_table
+    assert result["select"]["s.users"] == ["id"]
+
+
+def test_columns_dict_by_table_multiple_tables_unqualified():
+    # Multiple tables with unqualified columns cannot be resolved.
+    query = "SELECT id FROM users, orders WHERE active = 1"
+    parser = Parser(query)
+    result = parser.columns_dict_by_table
+    # Unqualified columns with multiple tables return None and are not added.
+    assert "where" not in result or "users" not in result.get("where", {})
+
+
+def test_columns_dict_by_table_join_with_alias_in_select_tables():
+    # JOIN table with alias covers alias branch in _select_tables join loop.
+    query = """
+    SELECT t1.id, t2.name
+    FROM users t1
+    JOIN orders t2 ON t1.id = t2.user_id
+    WHERE t1.active = 1
+    """
+    parser = Parser(query)
+    result = parser.columns_dict_by_table
+    assert result["select"]["users"] == ["id"]
+    assert result["select"]["orders"] == ["name"]
+    assert result["join"]["users"] == ["id"]
+    assert result["join"]["orders"] == ["user_id"]
+    assert result["where"]["users"] == ["active"]
+
+
+def test_columns_dict_by_table_walks_source_expression_fallback():
+    query = "SELECT users.id FROM users CROSS JOIN UNNEST(users.tags) AS t(tag)"
+    parser = Parser(query)
+    assert parser.columns_dict_by_table == {"select": {"users": ["id"]}}
+
+
+def test_table_column_extractor_walk_clause_handles_lists_and_non_expressions():
+    extractor = TableColumnExtractor(parse_one("SELECT 1"), {})
+
+    extractor._walk_clause([exp.column("id"), "ignored"], "select", ["users"], {})
+
+    assert extractor._columns == {"select": {"users": ["id"]}}
+
+
+def test_table_column_extractor_direct_tables_handles_edge_sources():
+    extractor = TableColumnExtractor(parse_one("SELECT 1"), {})
+    users = exp.Table(this=exp.Identifier(this="users"))
+    orders = exp.Table(this=exp.Identifier(this="orders"))
+    from_clause = exp.From(this=users, expressions=[orders])
+    alias = exp.Alias(this=users.copy())
+
+    assert extractor._direct_tables(None) == []
+    assert [table.name for table in extractor._direct_tables(from_clause)] == [
+        "users",
+        "orders",
+    ]
+    assert [table.name for table in extractor._direct_tables(alias)] == ["users"]
+
+
+def test_table_column_extractor_skips_nameless_direct_tables():
+    extractor = TableColumnExtractor(parse_one("SELECT 1"), {})
+    select = exp.Select()
+    select.set("from_", exp.From(this=exp.Table()))
+    select.set("joins", [exp.Join(this=exp.Table())])
+
+    assert extractor._select_tables(select) == ([], {})
+
+
+def test_table_column_extractor_walks_from_expression_sources():
+    extractor = TableColumnExtractor(parse_one("SELECT 1"), {})
+    source = exp.From(
+        this=exp.Table(this=exp.Identifier(this="users")),
+        expressions=[
+            exp.Subquery(this=parse_one("SELECT id FROM orders WHERE active = 1"))
+        ],
+    )
+
+    extractor._walk_source_queries(source)
+
+    assert extractor._columns == {
+        "select": {"orders": ["id"]},
+        "where": {"orders": ["active"]},
+    }
+
+
+def test_table_column_extractor_qualified_column_uses_global_aliases():
+    extractor = TableColumnExtractor(parse_one("SELECT 1"), {"u": "users"})
+    column = next(parse_one("SELECT u.id").find_all(exp.Column))
+
+    assert extractor._table_for_column(column, [], {}) == "users"
+
+
+def test_table_column_extractor_qualified_column_handles_string_names():
+    extractor = TableColumnExtractor(parse_one("SELECT 1"), {})
+    column = exp.Column(
+        this=exp.Identifier(this="id"),
+        table=exp.Identifier(this="users"),
+        db="db",
+        catalog="catalog",
+    )
+
+    assert extractor._qualified_column_table(column, {}) == "catalog.db.users"
 
 
 def test_aliases_switching_column_names():
