@@ -25,6 +25,7 @@ from sql_metadata.keywords_lists import QueryType
 from sql_metadata.nested_resolver import NestedResolver
 from sql_metadata.query_type_extractor import QueryTypeExtractor
 from sql_metadata.sql_cleaner import SqlCleaner
+from sql_metadata.table_column_extractor import TableColumnExtractor
 from sql_metadata.table_extractor import TableExtractor
 from sql_metadata.utils import UniqueList
 
@@ -61,6 +62,7 @@ class Parser:
         self._columns_aliases_names: UniqueList = UniqueList()
         self._columns_aliases: dict[str, str | list[str]] = {}
         self._columns_aliases_dict: dict[str, UniqueList] = {}
+        self._columns_dict_by_table: dict[str, dict[str, UniqueList]] | None = None
         self._output_columns: list[str] = []
 
         self._tables: list[str] | None = None
@@ -246,6 +248,25 @@ class Parser:
                     for r in resolved:
                         self._columns_dict.setdefault(key, UniqueList()).append(r)
         return self._columns_dict
+
+    @property
+    def columns_dict_by_table(self) -> dict[str, dict[str, UniqueList]]:
+        if self._columns_dict_by_table is not None:
+            return self._columns_dict_by_table
+
+        try:
+            ast = self._require_ast()
+        except ValueError:
+            self._columns_dict_by_table = {}
+            return self._columns_dict_by_table
+
+        extractor = TableColumnExtractor(
+            ast,
+            self.tables_aliases,
+            dialect=self._ast_parser.dialect,
+        )
+        self._columns_dict_by_table = extractor.extract()
+        return self._columns_dict_by_table
 
     @property
     def columns_aliases(self) -> dict[str, str | list[str]]:
