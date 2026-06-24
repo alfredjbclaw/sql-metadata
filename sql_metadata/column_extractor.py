@@ -330,6 +330,21 @@ class ColumnExtractor:
                 self._collector.cte_names.append(
                     self._cte_restore_map.get(alias, alias)
                 )
+                self._seed_cte_column_alias_names(cte)
+
+    def _seed_cte_column_alias_names(self, cte: exp.CTE) -> None:
+        table_alias = cte.args.get("alias")
+        if table_alias and table_alias.columns:
+            for col in table_alias.columns:
+                self._collector.cte_alias_names.add(col.name)
+            return
+
+        body = cte.this
+        if not isinstance(body, exp.Select):
+            return
+        for expr in body.expressions or []:
+            if isinstance(expr, exp.Alias):
+                self._collector.cte_alias_names.add(expr.alias)
 
     def _build_subquery_names(self) -> UniqueList:
         """Sort collected subquery items by depth and return their names.
@@ -747,6 +762,10 @@ class ColumnExtractor:
             c.alias_dict.setdefault(clause, UniqueList()).append(col.name)
             return
 
+        if self._is_unqualified_cte_column_alias_reference(col):
+            c.alias_dict.setdefault(clause, UniqueList()).append(col.name)
+            return
+
         full = self._column_full_name(col)
 
         unqualified = col.name
@@ -886,6 +905,43 @@ class ColumnExtractor:
             and col.table in c.cte_names
             and col.name in c.cte_alias_names
         )
+
+    def _is_unqualified_cte_column_alias_reference(
+        self, col: exp.Column
+    ) -> bool:
+        c = self._collector
+        return bool(
+            not col.table
+            and col.name in c.cte_alias_names
+            and self._select_references_cte(col)
+            and col.find_ancestor(exp.CTE) is None
+        )
+
+    def _select_references_cte(self, col: exp.Column) -> bool:
+        select = col.find_ancestor(exp.Select)
+        if select is None:
+            return False
+
+        for table in self._select_source_tables(select):
+            if table.name in self._collector.cte_names:
+                return True
+        return False
+
+    @staticmethod
+    def _select_source_tables(select: exp.Select) -> list[exp.Table]:
+        sources: list[exp.Table] = []
+        from_expr = select.args.get("from_") or select.args.get("from")
+        if isinstance(from_expr, exp.From):
+            if isinstance(from_expr.this, exp.Table):
+                sources.append(from_expr.this)
+            for expr in from_expr.expressions or []:
+                if isinstance(expr, exp.Table):
+                    sources.append(expr)
+
+        for join in select.args.get("joins") or []:
+            if isinstance(join, exp.Join) and isinstance(join.this, exp.Table):
+                sources.append(join.this)
+        return sources
 
     def _is_unqualified_alias_reference(
         self, col: exp.Column
