@@ -164,7 +164,7 @@ def test_generalization_of_sql():
     assert (
         Parser(sql).generalize
         == "SELECT page_title FROM page WHERE page_namespace = X "
-        "AND page_title COLLATE LATINN_GENERAL_CI LIKE X"
+        "AND page_title COLLATE LATIN1_GENERAL_CI LIKE X"
     )
 
     # queries with IN + brackets (#21)
@@ -231,3 +231,11 @@ def test_generalize_insert():
         == "INSERT into notification_stats.request_info "
         "( type, request_id, title, message, details ) values (XYZ)"
     )
+
+
+def test_generalized_query_preserves_table_names_containing_numbers():
+    query = "select count(1) from dummy_table_1"
+    generalized_query = Parser(query).generalize
+
+    assert generalized_query == "select count(N) from dummy_table_1"
+    assert Parser(generalized_query).tables == ["dummy_table_1"]

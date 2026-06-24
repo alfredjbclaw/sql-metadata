@@ -119,8 +119,8 @@ class Generalizator:
         # All newlines, tabs, etc replaced by single space
         sql = re.sub(r"\s+", " ", sql)
 
-        # All numbers => N
-        sql = re.sub(r"-?[0-9]+", "N", sql)
+        # Numeric tokens => N, preserving digits inside identifiers.
+        sql = re.sub(r"(?<![\w.])-?[0-9]+(?:\.[0-9]+)?(?![\w.])", "N", sql)
 
         # WHERE foo IN ('880987','882618','708228','522330')
         sql = re.sub(
