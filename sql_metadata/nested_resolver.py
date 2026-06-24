@@ -709,7 +709,7 @@ class NestedResolver:
             counter = NestedResolver._walk_subqueries(
                 child, names, bodies, counter
             )
-        if isinstance(node, exp.Subquery):
+        if isinstance(node, exp.Subquery) and NestedResolver._is_select_subquery(node):
             if node.alias:
                 # e.g. (SELECT 1) AS named — use the explicit alias
                 name = node.alias
@@ -720,3 +720,10 @@ class NestedResolver:
             names.append(name)
             bodies[name] = NestedResolver._body_sql(node.this)
         return counter
+
+    @staticmethod
+    def _is_select_subquery(node: exp.Subquery) -> bool:
+        return (
+            isinstance(node.this, exp.Select)
+            or node.this.find(exp.Select) is not None
+        )

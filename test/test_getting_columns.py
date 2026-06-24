@@ -56,6 +56,32 @@ def test_joins():
     ).columns
 
 
+def test_mysql_parenthesized_join_in_view_definition():
+    query = (
+        "select `t`.`symbol` AS `symbol` "
+        "from (`stock`.`top_momentum_sector` `s` "
+        "join `stock`.`daily_companies` `t` "
+        "on((`s`.`symbol` = `t`.`symbol`)))"
+    )
+    parser = Parser(query)
+    assert parser.columns == [
+        "stock.daily_companies.symbol",
+        "stock.top_momentum_sector.symbol",
+    ]
+    assert parser.columns_dict == {
+        "select": ["stock.daily_companies.symbol"],
+        "join": [
+            "stock.top_momentum_sector.symbol",
+            "stock.daily_companies.symbol",
+        ],
+    }
+    assert parser.tables == [
+        "stock.top_momentum_sector",
+        "stock.daily_companies",
+    ]
+    assert parser.subqueries == {}
+
+
 def test_joins_using():
     parser = Parser(
         "SELECT  page_title  FROM `redirect` INNER JOIN `page` "
