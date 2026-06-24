@@ -254,14 +254,8 @@ class Parser:
         if self._columns_dict_by_table is not None:
             return self._columns_dict_by_table
 
-        try:
-            ast = self._require_ast()
-        except ValueError:
-            self._columns_dict_by_table = {}
-            return self._columns_dict_by_table
-
         extractor = TableColumnExtractor(
-            ast,
+            self._require_ast(),
             self.tables_aliases,
             dialect=self._ast_parser.dialect,
         )
