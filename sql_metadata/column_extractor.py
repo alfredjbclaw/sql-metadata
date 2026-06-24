@@ -534,7 +534,7 @@ class ColumnExtractor:
                 out.append(expr.alias)
             elif isinstance(expr, exp.Star):
                 # e.g. SELECT *
-                self._collector.add_column("*", clause)
+                self._collector.add_column(self._star_name(expr), clause)
                 out.append("*")
             elif isinstance(expr, exp.Column):
                 # e.g. SELECT t.col_name
@@ -543,6 +543,10 @@ class ColumnExtractor:
             else:
                 # e.g. SELECT COALESCE(a, b) — function/expression without alias
                 cols = self._flat_columns(expr)
+                if not cols and expr.find(exp.Star):
+                    star_name = self._qualified_star_name(expr)
+                    if star_name:
+                        cols = [star_name]
                 for col in cols:
                     self._collector.add_column(col, clause)
                 out.append(cols[0] if len(cols) == 1 else str(expr))
@@ -817,7 +821,67 @@ class ColumnExtractor:
             parts.append(name)
             return ".".join(parts)
         # e.g. SELECT col — bare column name without table qualifier
+        table = self._single_qualified_table_for_scope(col)
+        if table and col.find_ancestor(exp.Subquery):
+            return f"{table}.{name}"
         return name
+
+    def _star_name(self, node: exp.Expression) -> str:
+        return self._qualified_star_name(node) or "*"
+
+    def _qualified_star_name(self, node: exp.Expression) -> str | None:
+        table = self._single_qualified_table_for_scope(node)
+        if table:
+            return f"{table}.*"
+        return None
+
+    def _single_qualified_table_for_scope(self, node: exp.Expression) -> str | None:
+        select = (
+            node if isinstance(node, exp.Select) else node.find_ancestor(exp.Select)
+        )
+        if not isinstance(select, exp.Select) or select.find_ancestor(exp.CTE):
+            return None
+
+        table_names = self._direct_table_names(select)
+        if table_names is None or len(table_names) != 1:
+            return None
+        table_name = table_names[0]
+        if "." in table_name:
+            return table_name
+        return None
+
+    def _direct_table_names(self, select: exp.Select) -> UniqueList | None:
+        table_names = UniqueList()
+        for source in self._direct_select_sources(select):
+            if not isinstance(source, exp.Table):
+                return None
+            table_names.append(self._table_full_name(source))
+        return table_names
+
+    @staticmethod
+    def _direct_select_sources(select: exp.Select) -> list[exp.Expression]:
+        sources: list[exp.Expression] = []
+        from_expr = select.args.get("from") or select.args.get("from_")
+        if isinstance(from_expr, exp.From):
+            if isinstance(from_expr.this, exp.Expression):
+                sources.append(from_expr.this)
+            sources.extend(from_expr.expressions)
+        elif isinstance(from_expr, exp.Expression):
+            sources.append(from_expr)
+
+        for join in select.args.get("joins") or []:
+            if isinstance(join, exp.Join) and isinstance(join.this, exp.Expression):
+                sources.append(join.this)
+        return sources
+
+    @staticmethod
+    def _table_full_name(table: exp.Table) -> str:
+        has_double_dot = table.args.get("db") == ""
+        return ".".join(
+            part
+            for part in [table.catalog, table.db, table.name]
+            if part or has_double_dot
+        )
 
     @staticmethod
     def _is_star_inside_function(star: exp.Star) -> bool:
@@ -1034,7 +1098,7 @@ class ColumnExtractor:
                 cols.append(self._column_full_name(expr))
             elif isinstance(expr, exp.Star):
                 # e.g. SELECT * — literal star
-                cols.append("*")
+                cols.append(self._star_name(expr))
             else:
                 # e.g. SELECT COALESCE(a, b) — extract columns from expression
                 for col_name in self._flat_columns(expr):
@@ -1109,5 +1173,5 @@ class ColumnExtractor:
             if self._is_standalone_star(child, seen_stars):
                 if not self._is_star_inside_function(child):
                     # e.g. SELECT * FROM t — standalone star, not COUNT(*)
-                    return "*"
+                    return self._star_name(child)
         return None
