@@ -18,5 +18,6 @@ MSSQL, MySQL, Hive/Spark, and TSQL bracket notation.
 from sql_metadata.exceptions import InvalidQueryDefinition
 from sql_metadata.keywords_lists import QueryType
 from sql_metadata.parser import Parser
+from sql_metadata.utils import UniqueList
 
-__all__ = ["InvalidQueryDefinition", "Parser", "QueryType"]
+__all__ = ["InvalidQueryDefinition", "Parser", "QueryType", "UniqueList"]

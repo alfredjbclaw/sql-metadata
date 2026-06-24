@@ -6,9 +6,10 @@ unterminated comments, deeply nested parentheses) by feeding them into
 are imported.
 """
 
-from sql_metadata import Parser
+from typing import get_type_hints
+
+from sql_metadata import Parser, UniqueList
 from sql_metadata.sql_cleaner import SqlCleaner
-from sql_metadata.utils import UniqueList
 
 
 def test_unique_list_subtraction():
@@ -22,6 +23,32 @@ def test_unique_list_deduplicates_on_init():
     """UniqueList removes duplicates when constructed from an iterable."""
     ul = UniqueList(["x", "y", "x", "z", "y"])
     assert list(ul) == ["x", "y", "z"]
+
+
+def test_parser_unique_list_properties_are_typed_as_unique_list():
+    parser = Parser(
+        """
+        WITH cte AS (SELECT id FROM users)
+        SELECT cte.id AS user_id
+        FROM cte
+        JOIN (SELECT user_id FROM events) event_sub
+            ON event_sub.user_id = cte.id
+        """
+    )
+    property_names = (
+        "columns",
+        "columns_aliases_names",
+        "tables",
+        "with_names",
+        "subqueries_names",
+    )
+
+    for property_name in property_names:
+        value = getattr(parser, property_name)
+        property_getter = getattr(Parser, property_name).fget
+
+        assert isinstance(value, UniqueList)
+        assert get_type_hints(property_getter)["return"] is UniqueList
 
 
 def test_extract_comments_unterminated_block_comment():
