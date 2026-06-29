@@ -709,6 +709,14 @@ class NestedResolver:
             counter = NestedResolver._walk_subqueries(
                 child, names, bodies, counter
             )
+        if (
+            isinstance(node, exp.Select)
+            and NestedResolver._is_unwrapped_select_subquery(node)
+        ):
+            counter += 1
+            name = f"subquery_{counter}"
+            names.append(name)
+            bodies[name] = NestedResolver._body_sql(node)
         if isinstance(node, exp.Subquery) and NestedResolver._is_select_subquery(node):
             if node.alias:
                 # e.g. (SELECT 1) AS named — use the explicit alias
@@ -726,4 +734,22 @@ class NestedResolver:
         return (
             isinstance(node.this, exp.Select)
             or node.this.find(exp.Select) is not None
+        )
+
+    @staticmethod
+    def _is_unwrapped_select_subquery(node: exp.Select) -> bool:
+        parent = node.parent
+        statement_body_parents = (
+            exp.CTE,
+            exp.Create,
+            exp.Except,
+            exp.Insert,
+            exp.Intersect,
+            exp.Subquery,
+            exp.Union,
+        )
+        return (
+            parent is not None
+            and not isinstance(parent, statement_body_parents)
+            and node.find_ancestor(exp.Subquery) is None
         )
