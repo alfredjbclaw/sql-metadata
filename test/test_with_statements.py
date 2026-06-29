@@ -1,6 +1,8 @@
 import pytest
+from sqlglot import exp
 
 from sql_metadata import InvalidQueryDefinition, Parser
+from sql_metadata.column_extractor import ColumnExtractor
 from sql_metadata.keywords_lists import QueryType
 
 
@@ -258,6 +260,53 @@ def test_unqualified_self_aliased_cte_column_is_marked_as_cte_alias_reference():
     assert parser.tables == ["projects"]
     assert parser.columns == ["pid", "*"]
     assert parser.columns_aliases_dict == {"where": ["pid"]}
+
+
+def test_unqualified_cte_alias_name_with_non_cte_sources():
+    query = """
+    WITH cte(x) AS (
+        SELECT a FROM t1
+    )
+    SELECT x
+    FROM t2, t3
+    JOIN t4 ON t3.id = t4.id
+    """
+    parser = Parser(query)
+    assert parser.tables == ["t1", "t2", "t3", "t4"]
+    assert parser.columns == ["a", "t3.id", "t4.id"]
+    assert parser.columns_dict == {"select": ["a"], "join": ["t3.id", "t4.id"]}
+
+
+def test_unqualified_cte_alias_name_in_delete_where():
+    query = """
+    WITH cte(x) AS (
+        SELECT a FROM t1
+    )
+    DELETE FROM t2
+    WHERE x = 1
+    """
+    parser = Parser(query)
+    assert parser.tables == ["t1", "t2"]
+    assert parser.columns == ["a"]
+    assert parser.columns_dict == {"select": ["a"], "where": ["a"]}
+
+
+def test_select_source_tables_from_expression_list():
+    select = exp.Select(expressions=[exp.column("x")])
+    select.set(
+        "from_",
+        exp.From(this=exp.to_table("t1"), expressions=[exp.to_table("t2")]),
+    )
+    tables = ColumnExtractor._select_source_tables(select)
+    assert [table.name for table in tables] == ["t1", "t2"]
+
+
+def test_nested_source_table_without_select_ancestor():
+    col = exp.column("x")
+    subquery = exp.Subquery(this=col)
+    where = exp.Where(this=subquery)
+    extractor = ColumnExtractor(where, {})
+    assert extractor._single_nested_source_table(col) is None
 
 
 def test_resolving_with_columns_with_wildcard():

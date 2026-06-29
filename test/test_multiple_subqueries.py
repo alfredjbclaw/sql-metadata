@@ -576,6 +576,57 @@ def test_unaliased_subquery():
     assert "subquery_1" in p.subqueries
 
 
+def test_unaliased_scalar_subquery_in_where_comparison():
+    # Test for issue #185 - scalar subquery in WHERE comparison was skipped
+    # https://github.com/macbre/sql-metadata/issues/185
+    query = (
+        "SELECT a.model FROM CAR_NAMES a "
+        "JOIN CARS_DATA b ON a.MakeId = b.Id "
+        "WHERE b.Weight < (SELECT avg(Weight) FROM CARS_DATA)"
+    )
+    p = Parser(query)
+    assert p.subqueries_names == ["subquery_1"]
+    assert p.subqueries == {
+        "subquery_1": "SELECT AVG(Weight) FROM CARS_DATA",
+    }
+    assert p.columns == [
+        "CAR_NAMES.model",
+        "CAR_NAMES.MakeId",
+        "CARS_DATA.Id",
+        "CARS_DATA.Weight",
+    ]
+    assert p.columns_dict == {
+        "select": ["CAR_NAMES.model", "CARS_DATA.Weight"],
+        "join": ["CAR_NAMES.MakeId", "CARS_DATA.Id"],
+        "where": ["CARS_DATA.Weight"],
+    }
+
+
+def test_unaliased_scalar_subquery_in_where_resolves_its_source_table():
+    query = (
+        "SELECT a.model FROM CAR_NAMES a "
+        "JOIN CARS_DATA b ON a.MakeId = b.Id "
+        "WHERE b.Weight < (SELECT avg(Weight) FROM WEIGHT_STATS)"
+    )
+    p = Parser(query)
+    assert p.subqueries_names == ["subquery_1"]
+    assert p.subqueries == {
+        "subquery_1": "SELECT AVG(Weight) FROM WEIGHT_STATS",
+    }
+    assert p.columns == [
+        "CAR_NAMES.model",
+        "CAR_NAMES.MakeId",
+        "CARS_DATA.Id",
+        "CARS_DATA.Weight",
+        "WEIGHT_STATS.Weight",
+    ]
+    assert p.columns_dict == {
+        "select": ["CAR_NAMES.model", "WEIGHT_STATS.Weight"],
+        "join": ["CAR_NAMES.MakeId", "CARS_DATA.Id"],
+        "where": ["CARS_DATA.Weight"],
+    }
+
+
 def test_multiple_unaliased_subqueries():
     p = Parser(
         "SELECT * FROM t "

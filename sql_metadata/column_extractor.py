@@ -835,8 +835,56 @@ class ColumnExtractor:
             parts.append(resolved)
             parts.append(name)
             return ".".join(parts)
+        nested_table = self._single_nested_source_table(col)
+        if nested_table:
+            return f"{nested_table}.{name}"
         # e.g. SELECT col — bare column name without table qualifier
         return name
+
+    def _single_nested_source_table(self, col: exp.Column) -> str | None:
+        subquery = col.find_ancestor(exp.Subquery)
+        if subquery is None or subquery.alias:
+            return None
+
+        select = col.find_ancestor(exp.Select)
+        if select is None:
+            return None
+
+        if select.find_ancestor(exp.In) is not None:
+            return None
+
+        if subquery.find_ancestor(exp.Where) is None:
+            return None
+
+        tables = self._select_source_tables(select)
+        if len(tables) != 1:
+            return None
+
+        table = tables[0]
+        table_alias = table.alias
+        if table_alias:
+            table_name = self._resolve_table_alias(table_alias)
+        else:
+            table_name = self._table_full_name(table)
+
+        query_tables = self._table_names_in_query(exclude=select)
+        if len(query_tables) < 2:
+            return None
+        return table_name
+
+    def _table_names_in_query(self, exclude: exp.Select | None = None) -> UniqueList:
+        names = UniqueList()
+        for table in self._ast.find_all(exp.Table):
+            if exclude is not None and table.find_ancestor(exp.Select) is exclude:
+                continue
+            names.append(self._table_full_name(table))
+        return names
+
+    @staticmethod
+    def _table_full_name(table: exp.Table) -> str:
+        return ".".join(
+            part for part in [table.catalog, table.db, table.name] if part
+        )
 
     @staticmethod
     def _is_star_inside_function(star: exp.Star) -> bool:
